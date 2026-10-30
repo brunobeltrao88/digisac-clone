@@ -1,0 +1,331 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Multi-tenant ────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  plan      Plan     @default(FREE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  channels      Channel[]
+  contacts      Contact[]
+  conversations Conversation[]
+  departments   Department[]
+  tags          Tag[]
+  quickReplies  QuickReply[]
+  bots          Bot[]
+}
+
+enum Plan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+// ─── Users / Agents ──────────────────────────────────────────────────────────
+
+model User {
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  passwordHash   String
+  avatar         String?
+  role           UserRole @default(AGENT)
+  status         AgentStatus @default(OFFLINE)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  departments    DepartmentMember[]
+  conversations  ConversationAgent[]
+  messages       Message[]
+  sessions       Session[]
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  SUPERVISOR
+  AGENT
+}
+
+enum AgentStatus {
+  ONLINE
+  BUSY
+  AWAY
+  OFFLINE
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Departments ─────────────────────────────────────────────────────────────
+
+model Department {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  createdAt      DateTime @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  members        DepartmentMember[]
+  conversations  Conversation[]
+}
+
+model DepartmentMember {
+  id           String @id @default(cuid())
+  userId       String
+  departmentId String
+
+  user       User       @relation(fields: [userId], references: [id])
+  department Department @relation(fields: [departmentId], references: [id])
+
+  @@unique([userId, departmentId])
+}
+
+// ─── Channels ────────────────────────────────────────────────────────────────
+
+model Channel {
+  id             String      @id @default(cuid())
+  name           String
+  type           ChannelType
+  status         ChannelStatus @default(ACTIVE)
+  config         Json        @default("{}")
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  conversations  Conversation[]
+}
+
+enum ChannelType {
+  WHATSAPP
+  WHATSAPP_BUSINESS
+  TELEGRAM
+  INSTAGRAM
+  FACEBOOK
+  WEBCHAT
+  EMAIL
+  SMS
+}
+
+enum ChannelStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+}
+
+// ─── Contacts ────────────────────────────────────────────────────────────────
+
+model Contact {
+  id             String   @id @default(cuid())
+  name           String
+  phone          String?
+  email          String?
+  avatar         String?
+  notes          String?
+  customFields   Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  conversations  Conversation[]
+  tags           ContactTag[]
+}
+
+// ─── Tags ────────────────────────────────────────────────────────────────────
+
+model Tag {
+  id             String @id @default(cuid())
+  name           String
+  color          String @default("#6366f1")
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  contacts       ContactTag[]
+  conversations  ConversationTag[]
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+
+  contact Contact @relation(fields: [contactId], references: [id])
+  tag     Tag     @relation(fields: [tagId], references: [id])
+
+  @@id([contactId, tagId])
+}
+
+model ConversationTag {
+  conversationId String
+  tagId          String
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  tag          Tag          @relation(fields: [tagId], references: [id])
+
+  @@id([conversationId, tagId])
+}
+
+// ─── Conversations ───────────────────────────────────────────────────────────
+
+model Conversation {
+  id             String             @id @default(cuid())
+  number         Int
+  status         ConversationStatus @default(OPEN)
+  priority       Priority           @default(NORMAL)
+  subject        String?
+  lastMessageAt  DateTime?
+  closedAt       DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  channelId      String
+  channel        Channel      @relation(fields: [channelId], references: [id])
+
+  contactId      String?
+  contact        Contact?     @relation(fields: [contactId], references: [id])
+
+  departmentId   String?
+  department     Department?  @relation(fields: [departmentId], references: [id])
+
+  agents         ConversationAgent[]
+  messages       Message[]
+  tags           ConversationTag[]
+
+  @@unique([organizationId, number])
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model ConversationAgent {
+  conversationId String
+  userId         String
+  assignedAt     DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@id([conversationId, userId])
+}
+
+// ─── Messages ────────────────────────────────────────────────────────────────
+
+model Message {
+  id             String      @id @default(cuid())
+  type           MessageType @default(TEXT)
+  content        String
+  mediaUrl       String?
+  mediaType      String?
+  direction      Direction
+  status         MessageStatus @default(SENT)
+  externalId     String?
+  createdAt      DateTime    @default(now())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  senderId       String?
+  sender         User?        @relation(fields: [senderId], references: [id])
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  LOCATION
+  STICKER
+  TEMPLATE
+  INTERACTIVE
+  NOTE
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// ─── Quick Replies ───────────────────────────────────────────────────────────
+
+model QuickReply {
+  id             String @id @default(cuid())
+  shortcut       String
+  title          String
+  content        String
+  createdAt      DateTime @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+// ─── Bots ────────────────────────────────────────────────────────────────────
+
+model Bot {
+  id             String    @id @default(cuid())
+  name           String
+  active         Boolean   @default(false)
+  trigger        BotTrigger @default(FIRST_MESSAGE)
+  flow           Json      @default("[]")
+  createdAt      DateTime  @default(now())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+}
+
+enum BotTrigger {
+  FIRST_MESSAGE
+  KEYWORD
+  ALWAYS
+}
